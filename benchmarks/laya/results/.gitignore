@@ -1,0 +1,5 @@
+# Committed: measured runs (m1, m2, ...) and the reports built from them.
+# Not committed: feasibility runs, worker/frontend logs, runner state.
+*feasibility*
+*.log
+done_*

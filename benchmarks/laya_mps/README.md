@@ -62,6 +62,7 @@ frontend first: the scripts start their own on ports 8000, 8001 and 8080.
 | checkpoint download time | `HF_HOME="$(mktemp -d)" python -c "import time, huggingface_hub as h; t = time.time(); h.snapshot_download('convaiinnovations/laya', allow_patterns=['rl_agent_config.json', 'model.safetensors', 'tokenizer/*', 'encoder/*']); print(f'{time.time() - t:.0f} s')"` |
 | first request after ready, time to ready, memory: worker against laya-serve, with and without the options | `bench_http.py` C3, C3w and C3o above, then `report.py` (phases and memory tables) |
 | first request after ready over many fresh starts | the loop below the table |
+| answers against Laya in fp32 on the CPU, per checkpoint, state length and number of questions | `LAYA_CONTRACT=1 LAYA_CONTRACT_DEVICE=mps PYTHONPATH=src python -m pytest tests/laya/test_contract.py -k answers_match -rP`, and with `LAYA_CONTRACT_FLAGS="--compile --weights fp16"` (each case prints its largest difference) |
 | warm latency and answers, with the options against without | `paired.py --run p1 --a "" --b "--compile --weights fp16"` |
 | what each option contributes | `paired.py --run p2 --a "" --b=--compile`, `paired.py --run p3 --a "" --b "--weights fp16"`, and fp16 on top of compile: `paired.py --run p4 --a=--compile --b "--compile --weights fp16"` |
 | frontend overhead | start a worker on 8000 and the frontend on 8080 as in the recipe, then `paired.py --run f1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8080` |

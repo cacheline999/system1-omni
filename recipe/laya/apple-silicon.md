@@ -85,10 +85,15 @@ requests with several questions run the encoder compiled and Laya's decision hea
 On the M1 Pro, with both workers running and every request sent to each back to back, the two options
 together lowered warm p50 against the worker without them by 37–38% for a 68-token one-question
 request (about 57 → 35 ms in those runs), 17–20% at 198–484 tokens, 14% for three questions and 18% for
-six. Answers stayed within 0.0031 of the fp32 worker's. A worker running on its own uses about 3 GB
-with the options instead of 4.2 GB (2.8 GB against 3.5 GB in those paired runs, where the two workers
-shared the machine), measured on the six benchmark inputs; see below for how it grows. The price is startup: the worker became ready after 35–39 s instead of 8–10 s, and
-its first request after that took 62–78 ms.
+six. Answers stayed within 0.0031 of those of the worker without the options (english checkpoint, the
+six benchmark inputs); that worker runs requests with five or more questions in Laya's fp16 autocast, so
+for those this compares fp16 with fp16. Against Laya in fp32 on the CPU, both workers stayed within
+0.002 for both checkpoints, short and long states and one to eight questions, without a changed decision
+(the contract tests). These are fixed inputs: a decision close to even can move further and flip. A
+worker running on its own uses about 3 GB with the options instead of 4.2 GB (2.8 GB against 3.5 GB in
+those paired runs, where the two workers shared the machine), measured on the six benchmark inputs; see
+below for how it grows. The price is startup: the worker became ready after 35–39 s instead of 8–10 s,
+and its first request after that took 62–78 ms.
 
 On an M5 the same paired comparison gave median ratios of 0.51–0.53 for one-question requests at
 47–68 tokens, 0.30–0.33 at 198–484 tokens, 0.37 for three questions and 0.60 for six, most of it from
@@ -159,8 +164,9 @@ LAYA_CONTRACT=1 PYTHONPATH=src .venv/bin/python -m pytest tests/laya    # plus c
 ```
 
 The contract tests start a real worker and check readiness, the three decision types, error responses, and
-that its answers match Laya run directly in fp32 on the CPU. On an Apple Silicon Mac, run them against the
-GPU as well, without and with the options:
+that its answers match Laya run directly in fp32 on the CPU, within 0.001, or 0.01 where fp16 is used, with
+every decision the same: for both checkpoints, a short and a long state, and one to eight questions. On an
+Apple Silicon Mac, run them against the GPU as well, without and with the options:
 
 ```sh
 LAYA_CONTRACT=1 LAYA_CONTRACT_DEVICE=mps PYTHONPATH=src .venv/bin/python -m pytest tests/laya/test_contract.py

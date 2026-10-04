@@ -6,6 +6,7 @@ JSONL to `results/` (kept out of the repository); `report.py` builds the tables 
 | file | purpose |
 | --- | --- |
 | `workloads.jsonl` | the fixed inputs: W1–W6 are timed, P* are for answer comparison only. Tokens per row with Laya's tokenizer: W1 68, W2 198, W3 484, W4 68/48/47, W5 40–68, W6 47 |
+| `workloads_autocast.jsonl` | W1's short and W3's long state with 2, 5, 6 and 8 questions, for Laya's fp16 autocast against fp32 |
 | `bench_inproc.py` | Laya in-process (no HTTP): load, warmup, first request, warm latency, memory |
 | `bench_http.py` | a `/v1/systemone` server, optionally started by the script and optionally behind the frontend: time to ready, first request, warm latency, throughput |
 | `paired.py` | two configurations compared request by request, both alive at once: two worker flag sets, or two running servers (e.g. a worker directly and through the frontend) |
@@ -62,6 +63,8 @@ frontend first: the scripts start their own on ports 8000, 8001 and 8080.
 | checkpoint download time | `HF_HOME="$(mktemp -d)" python -c "import time, huggingface_hub as h; t = time.time(); h.snapshot_download('convaiinnovations/laya', allow_patterns=['rl_agent_config.json', 'model.safetensors', 'tokenizer/*', 'encoder/*']); print(f'{time.time() - t:.0f} s')"` |
 | first request after ready, time to ready, memory: worker against laya-serve, with and without the options | `bench_http.py` C3, C3w and C3o above, then `report.py` (phases and memory tables) |
 | first request after ready over many fresh starts | the loop below the table |
+| answers against Laya in fp32 on the CPU, per checkpoint, state length and number of questions | `LAYA_CONTRACT=1 LAYA_CONTRACT_DEVICE=mps PYTHONPATH=src python -m pytest tests/laya/test_contract.py -k answers_match -rP`, and with `LAYA_CONTRACT_FLAGS="--compile --weights fp16"` (each case prints its largest difference) |
+| Laya's fp16 autocast against fp32, worker without the options | start `LAYA_MPS_AMP_MIN_ROWS=1000000 PYTHONPATH=src python -m frontend.laya_mps --device mps --model english --port 8000` and the same without the variable on port 8001, then `paired.py --run am1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8001 --workloads benchmarks/laya_mps/workloads_autocast.jsonl -n 100 --discard 5`; for multilingual, `--model multilingual` on both workers and on `paired.py` |
 | warm latency and answers, with the options against without | `paired.py --run p1 --a "" --b "--compile --weights fp16"` |
 | what each option contributes | `paired.py --run p2 --a "" --b=--compile`, `paired.py --run p3 --a "" --b "--weights fp16"`, and fp16 on top of compile: `paired.py --run p4 --a=--compile --b "--compile --weights fp16"` |
 | frontend overhead | start a worker on 8000 and the frontend on 8080 as in the recipe, then `paired.py --run f1 --a-url http://127.0.0.1:8000 --b-url http://127.0.0.1:8080` |

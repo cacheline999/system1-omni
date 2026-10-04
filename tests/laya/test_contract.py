@@ -118,10 +118,11 @@ startup = {}
 
 @pytest.fixture(scope="module")
 def reference():
-    """Laya itself, in this process on the CPU in fp32: what the worker's answers are compared with."""
-    import laya
+    """Laya itself, in this process on the CPU in fp32, for every checkpoint: what the worker's answers
+    are compared with."""
+    from laya.router import Router
 
-    return laya.load(CHECKPOINT, device="cpu")
+    return Router(device="cpu")
 
 
 def test_health_reports_the_loaded_model(worker):
@@ -204,47 +205,79 @@ def test_decisions(worker, questions, kinds):
 
 
 SIX = {f"q{i}": q for i, q in enumerate([CHOICE, SCORE, NOUL, CHOICE, SCORE, NOUL])}
-
-
-@pytest.mark.parametrize(
-    "questions",
+QUESTIONS = {
+    "choice": {"q": CHOICE},
+    "score": {"q": SCORE},
+    "noul": {"q": NOUL},
+    "combined": {"a": CHOICE, "b": SCORE, "c": NOUL},
+    "five-questions": {
+        f"q{i}": q for i, q in enumerate([CHOICE, SCORE, NOUL] * 2) if i < 5
+    },
+    "six-questions": SIX,
+    "eight-questions": {
+        f"q{i}": q for i, q in enumerate([CHOICE, SCORE, NOUL] * 3) if i < 8
+    },
+}
+LONG_STATE = " ".join(
     [
-        {"q": CHOICE},
-        {"q": SCORE},
-        {"q": NOUL},
-        {"a": CHOICE, "b": SCORE, "c": NOUL},
-        SIX,
-    ],
-    ids=["choice", "score", "noul", "combined", "six-questions"],
+        "I ordered a laptop stand and a keyboard on the first of the month and paid by card.",
+        "The stand arrived but the keyboard did not, and the tracking page has not changed in ten days.",
+        "Yesterday I noticed two charges for the same order on my statement, one of them pending.",
+        "I wrote to support twice and only received an automatic reply with a ticket number.",
+        "I need the keyboard for work next week, otherwise I would rather cancel that part.",
+    ]
+    * 3
 )
-def test_answers_match_laya_itself(worker, reference, questions):
+
+
+def decision(answer):
+    if answer["type"] == "noul":
+        return answer["noul"] >= 0.5
+    return max(answer["probabilities"], key=answer["probabilities"].get)
+
+
+@pytest.mark.parametrize("model", ["english", "multilingual"])
+@pytest.mark.parametrize("state", [STATE, LONG_STATE], ids=["short", "long"])
+@pytest.mark.parametrize("questions", list(QUESTIONS.values()), ids=list(QUESTIONS))
+def test_answers_match_laya_itself(worker, reference, model, state, questions):
     port, _ = worker
-    status, body, _ = decide(port, questions)
+    body = {"model": model, "state": state, "questions": questions}
+    status, payload, _ = call(port, "POST", "/v1/systemone", body)
     assert status == 200
-    served = json.loads(body)
-    expected = reference.system_one(STATE, questions)
-    assert set(expected) <= set(served)  # the worker adds `routing`, it drops nothing
+    served = json.loads(payload)
+    expected = reference.predict(state, questions, model=model)
+    assert set(expected) <= set(
+        served
+    )  # the worker adds nothing laya does not, and drops nothing
     assert served["usage"] == expected["usage"]
     reduced = "fp16" in FLAGS or (
         DEVICE == "mps"
         and len(questions) >= startup["first_health"]["mps_amp_min_rows"]
     )
     tolerance = 1e-2 if reduced else 1e-3
+    worst, flipped = 0.0, []
     for qid, want in expected["answers"].items():
         got = served["answers"][qid]
         assert set(got) == set(want)
         if want["type"] == "noul":
-            assert got["noul"] == pytest.approx(want["noul"], abs=tolerance)
-            continue
-        assert set(got["probabilities"]) == set(want["probabilities"])
-        for option, p in want["probabilities"].items():
-            assert got["probabilities"][option] == pytest.approx(p, abs=tolerance)
-        if want["type"] == "choice":
-            assert (
-                got["choice"]
-                == want["choice"]
-                == max(got["probabilities"], key=got["probabilities"].get)
+            worst = max(worst, abs(got["noul"] - want["noul"]))
+        else:
+            assert set(got["probabilities"]) == set(want["probabilities"])
+            worst = max(
+                worst,
+                *(
+                    abs(got["probabilities"][o] - p)
+                    for o, p in want["probabilities"].items()
+                ),
             )
+        if want["type"] == "choice":
+            assert got["choice"] == decision(got)
+        if decision(got) != decision(want):
+            flipped.append(qid)
+    print(f"max |dp| {worst:.4f}, flipped {flipped}")  # shown with pytest -rP
+    assert worst <= tolerance and not flipped, (
+        f"max |dp| {worst:.4f} (tolerance {tolerance}), flipped {flipped}"
+    )
 
 
 def test_same_request_same_answer(worker):
